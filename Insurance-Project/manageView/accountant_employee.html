@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Employee Management</title>
+  <link rel="stylesheet" href="Employeestyle.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.3.1/dist/css/bootstrap.min.css">
+  <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/popper.js@1.14.7/dist/umd/popper.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.3.1/dist/js/bootstrap.min.js"></script>
+</head>
+<body>
+  <div class="header bg-primary text-white text-center p-3">
+    <h1>Quản lí nhân viên</h1>
+  </div>
+
+  <div class="sidebar bg-light p-3" style="float: left; width: 20%; height: 100vh;">
+    <ul class="nav flex-column">
+      <li class="nav-item"><a class="nav-link" href="./sale_employee.html">Nhân viên sale</a></li>
+      <li class="nav-item"><a class="nav-link" href="./supervisor_employee.html">Nhân viên giám sát</a></li>
+      <li class="nav-item"><a class="nav-link" href="./accountant_employee.html">Nhân viên kế toán</a></li>
+      <li class="nav-item">
+        <a class="nav-link" href="../adminView.html">
+          <button type="button" class="btn btn-outline-primary">Quay lại</button>
+        </a>
+      </li>
+    </ul>
+  </div>
+
+  <div class="content p-3" style="margin-left: 20%; height: 100vh;">
+    <h2>Danh Sách Nhân Viên</h2>
+    <table id="employeeTable" class="table table-bordered">
+      <thead class="thead-light">
+        <tr>
+          <th>Mã Nhân Viên</th>
+          <th>Tên Nhân Viên</th>
+          <th>Vị Trí</th>
+          <th>Trạng Thái</th>
+          <th>Quản lí nhân viên</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <a href="add-employee.html?role=accountant" class="btn btn-primary mb-3">+ Thêm nhân viên kế toán</a>
+  </div>
+
+  <div class="footer bg-dark text-white text-center p-3" style="clear: both;">
+    <p>&copy; 2025 Insurance Project</p>
+  </div>
+
+  <!-- Import dữ liệu mặc định -->
+  <script src="data-employee-accountant.js"></script>
+
+  <!-- Tải dữ liệu lên bảng -->
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      const tableBody = document.querySelector("#employeeTable tbody");
+  
+      // Lấy danh sách từ localStorage hoặc fallback sang file js
+      const dsAccountant = JSON.parse(localStorage.getItem("dsAccountant")) || Accountant;
+  
+      // Xoá dữ liệu cũ
+      tableBody.innerHTML = "";
+  
+      // Thêm dữ liệu vào bảng
+      dsAccountant.forEach(nv => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${nv.manv}</td>
+          <td>${nv.tennv}</td>
+          <td>Nhân viên kế toán</td>
+          <td><span class="status-online">Online</span></td>
+          <td>
+            <button class="btn btn-edit btn-sm btn-warning" onclick="editEmployee('${nv.manv}')">Sửa</button>
+            <button class="btn btn-delete btn-sm btn-danger" onclick="deleteEmployee('${nv.manv}')">Xoá</button>
+          </td>
+        `;
+        tableBody.appendChild(tr);
+      });
+    });
+  
+    function editEmployee(manv) {
+      window.location.href = `edit-employee.html?manv=${manv}&role=accountant`;
+    }
+  
+    function deleteEmployee(manv) {
+      if (!confirm("Bạn có chắc chắn muốn xoá nhân viên này?")) return;
+  
+      const dsAccountant = JSON.parse(localStorage.getItem("dsAccountant")) || [];
+      const newList = dsAccountant.filter(nv => nv.manv !== manv);
+      localStorage.setItem("dsAccountant", JSON.stringify(newList));
+      location.reload();
+    }
+  </script>
+  
+</body>
+</html>
