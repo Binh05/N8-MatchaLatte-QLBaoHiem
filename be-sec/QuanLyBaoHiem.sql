@@ -31,9 +31,9 @@ GO
 CREATE TABLE Users (
     UserID INT IDENTITY(1,1) NOT NULL,
     Username NVARCHAR(100) NOT NULL,
-    PasswordHash VARBINARY(64) NOT NULL,
+    PasswordHash VARBINARY(64) NOT NULL, -- SHA2_256 output size
     FullName NVARCHAR(150) NOT NULL,
-    Role NVARCHAR(50) NOT NULL,
+    Role NVARCHAR(50) NOT NULL, -- Vai trò ('ContractCreator', 'Insured', 'Accountant', 'Supervisor')
     IsActive BIT NOT NULL DEFAULT 1,
 
     CONSTRAINT PK_Users PRIMARY KEY (UserID),
@@ -60,13 +60,13 @@ CREATE TABLE InsuredPersons (
     PermanentAddress NVARCHAR(500) NOT NULL,
     TemporaryAddress NVARCHAR(500),
     ContactAddress NVARCHAR(500) NOT NULL,
-    MedicalHistory VARBINARY(MAX),
-    UserID INT NULL,
+    MedicalHistory VARBINARY(MAX), -- Dữ liệu mã hóa bất đối xứng
+    UserID INT NULL, -- Liên kết tới tài khoản người dùng (nếu người được BH có tài khoản)
     CreatedAt DATETIME2(3) NOT NULL DEFAULT SYSDATETIME(),
 
     CONSTRAINT PK_InsuredPersons PRIMARY KEY (InsuredPersonID),
     CONSTRAINT FK_InsuredPersons_Users FOREIGN KEY (UserID) REFERENCES Users(UserID)
-        ON DELETE SET NULL ON UPDATE CASCADE,
+        ON DELETE SET NULL ON UPDATE CASCADE, -- Nếu User bị xóa, chỉ set NULL ở đây
     CONSTRAINT CK_InsuredPersons_Gender CHECK (Gender IS NULL OR Gender IN (N'Nam', N'Nữ', N'Khác'))
 );
 GO
@@ -76,14 +76,15 @@ CREATE TABLE InsuranceContracts (
     ContractNumber NVARCHAR(50) NOT NULL,
     InsuranceTypeID INT NOT NULL,
     InsuredPersonID INT NOT NULL,
-    ContractCreatorUserID INT NOT NULL,
+    ContractCreatorUserID INT NOT NULL, -- UserID của người lập hợp đồng
     StartDate DATE NOT NULL,
     EndDate DATE NOT NULL,
-    InsuranceValue VARBINARY(MAX) NOT NULL,
-    PremiumAmount VARBINARY(MAX) NOT NULL,
+    InsuranceValue VARBINARY(MAX) NOT NULL, -- Dữ liệu mã hóa đối xứng
+    PremiumAmount VARBINARY(MAX) NOT NULL, -- Dữ liệu mã hóa đối xứng
     PaymentFrequency NVARCHAR(50) NOT NULL,
     Status NVARCHAR(50) NOT NULL,
     CreatedAt DATETIME2(3) NOT NULL DEFAULT SYSDATETIME(),
+    -- CreatedByUserID INT NOT NULL, -- Cột này có thể không cần thiết nếu dùng Trigger Log với SESSION_CONTEXT
 
     CONSTRAINT PK_InsuranceContracts PRIMARY KEY (ContractID),
     CONSTRAINT UQ_InsuranceContracts_ContractNumber UNIQUE (ContractNumber),
@@ -93,6 +94,8 @@ CREATE TABLE InsuranceContracts (
         ON DELETE NO ACTION ON UPDATE NO ACTION,
     CONSTRAINT FK_InsuranceContracts_PolicyCreator FOREIGN KEY (ContractCreatorUserID) REFERENCES Users(UserID)
         ON DELETE NO ACTION ON UPDATE NO ACTION,
+    -- CONSTRAINT FK_InsuranceContracts_CreatedByUser FOREIGN KEY (CreatedByUserID) REFERENCES Users(UserID)
+    --     ON DELETE NO ACTION ON UPDATE NO ACTION,
     CONSTRAINT CK_InsuranceContracts_Dates CHECK (EndDate >= StartDate),
     CONSTRAINT CK_InsuranceContracts_Status CHECK (Status IN (N'Mới', N'Hiệu lực', N'Hết hạn', N'Hủy bỏ'))
 );
@@ -100,28 +103,28 @@ GO
 
 CREATE TABLE RoleAssignments (
     AssignmentID INT IDENTITY(1,1) NOT NULL,
-    UserID INT NOT NULL,
+    UserID INT NOT NULL, -- UserID của Accountant hoặc Supervisor
     InsuranceTypeID INT NOT NULL,
-    AssignedRole NVARCHAR(50) NOT NULL,
+    AssignedRole NVARCHAR(50) NOT NULL, -- Chỉ 'Accountant' hoặc 'Supervisor'
 
     CONSTRAINT PK_RoleAssignments PRIMARY KEY (AssignmentID),
     CONSTRAINT FK_RoleAssignments_Users FOREIGN KEY (UserID) REFERENCES Users(UserID)
-        ON DELETE CASCADE ON UPDATE CASCADE,
+        ON DELETE CASCADE ON UPDATE CASCADE, -- Nếu User bị xóa/đổi ID, phân công cũng thay đổi/xóa
     CONSTRAINT FK_RoleAssignments_InsuranceTypes FOREIGN KEY (InsuranceTypeID) REFERENCES InsuranceTypes(InsuranceTypeID)
-        ON DELETE CASCADE ON UPDATE CASCADE,
+        ON DELETE CASCADE ON UPDATE CASCADE, -- Nếu Loại BH bị xóa/đổi ID, phân công cũng thay đổi/xóa
     CONSTRAINT UQ_RoleAssignments_UserTypeRole UNIQUE (UserID, InsuranceTypeID, AssignedRole),
     CONSTRAINT CK_RoleAssignments_AssignedRole CHECK (AssignedRole IN ('Accountant', 'Supervisor'))
 );
 GO
 
 CREATE TABLE AuditLogs (
-    LogID BIGINT IDENTITY(1,1) PRIMARY KEY,
-    TableName NVARCHAR(128) NOT NULL,
-    ActionType NVARCHAR(10) NOT NULL,
-    RecordPK NVARCHAR(255) NOT NULL,
-    ChangedByUserID INT NULL,
+    LogID BIGINT IDENTITY(1,1) PRIMARY KEY, -- Dùng BIGINT cho bảng log lớn
+    TableName NVARCHAR(128) NOT NULL, -- sysname = NVARCHAR(128)
+    ActionType NVARCHAR(10) NOT NULL, -- 'INSERT', 'UPDATE', 'DELETE'
+    RecordPK NVARCHAR(255) NOT NULL, -- Lưu khóa chính của bản ghi bị ảnh hưởng (có thể là nhiều cột)
+    ChangedByUserID INT NULL, -- UserID từ SESSION_CONTEXT (NULL nếu không set)
     ChangeDate DATETIME2(3) NOT NULL DEFAULT SYSDATETIME(),
-    Details NVARCHAR(MAX) NULL
+    Details NVARCHAR(MAX) NULL -- Mô tả chi tiết thay đổi (JSON hoặc văn bản)
 );
 GO
 
@@ -130,15 +133,18 @@ GO
 -- 1. Master Key (nếu chưa có)
 IF NOT EXISTS (SELECT name FROM sys.symmetric_keys WHERE name = '##MS_DatabaseMasterKey##')
 BEGIN
-    CREATE MASTER KEY ENCRYPTION BY PASSWORD = 'QuanLyBaoHiem88!';
+    CREATE MASTER KEY ENCRYPTION BY PASSWORD = 'QuanLyBaoHiem88!'; -- Thay bằng mật khẩu cực mạnh
 END
 GO
+
 -- 2. Certificate và Symmetric Key cho dữ liệu hợp đồng (AES)
 IF NOT EXISTS (SELECT * FROM sys.certificates WHERE name = 'AppCert')
 BEGIN
     CREATE CERTIFICATE AppCert WITH SUBJECT = 'Application Data Encryption';
 END
 GO
+
+
 IF NOT EXISTS (SELECT * FROM sys.symmetric_keys WHERE name = 'AppSymKey')
 BEGIN
     CREATE SYMMETRIC KEY AppSymKey
@@ -146,9 +152,13 @@ BEGIN
     ENCRYPTION BY CERTIFICATE AppCert;
 END
 GO
+
 -- 3. Certificate và Asymmetric Key cho lịch sử bệnh (RSA)
+-- Lưu ý: Certificate này cần chứa khóa riêng tư để có thể giải mã bằng Asymmetric Key tương ứng
 IF NOT EXISTS (SELECT * FROM sys.certificates WHERE name = 'MedicalCert')
 BEGIN
+    -- Tạo Certificate (ví dụ tự ký - self-signed)
+    -- Trong thực tế, bạn có thể import Certificate từ file PFX đã có khóa riêng
     CREATE CERTIFICATE MedicalCert WITH SUBJECT = 'Medical History Encryption';
 END
 GO
@@ -157,7 +167,7 @@ GO
 IF NOT EXISTS (SELECT * FROM sys.asymmetric_keys WHERE name = 'MedicalAsymKey')
 BEGIN
     CREATE ASYMMETRIC KEY MedicalAsymKey
-    WITH ALGORITHM = RSA_2048;
+    WITH ALGORITHM = RSA_2048; -- Bạn có thể chọn độ dài khóa khác (ví dụ: RSA_1024, RSA_4096)
 END
 GO
 
@@ -179,7 +189,7 @@ BEGIN
         RETURN;
     END;
 
-    IF @Role NOT IN ('ContractCreator', 'Insured', 'Accountant', 'Supervisor')
+    IF @Role NOT IN ('ContractCreator', 'Insured', 'Accountant', 'Supervisor', 'Admin')
     BEGIN
         RAISERROR('Vai trò không hợp lệ.', 16, 1);
         RETURN;
@@ -227,6 +237,9 @@ BEGIN
     IF @InputHash = @StoredHash
     BEGIN
         SET @IsValid = 1;
+        -- Có thể thực hiện set session context ngay tại đây nếu muốn
+        -- EXEC sp_set_session_context N'UserID', @UserID;
+        -- EXEC sp_set_session_context N'UserRole', @UserRole;
     END
     ELSE
     BEGIN
@@ -245,17 +258,21 @@ CREATE PROCEDURE CreateInsuredPerson
     @PermanentAddress NVARCHAR(500),
     @TemporaryAddress NVARCHAR(500) = NULL,
     @ContactAddress NVARCHAR(500),
-    @MedicalHistory NVARCHAR(MAX) = NULL,
-    @UserID INT = NULL
+    @MedicalHistory NVARCHAR(MAX) = NULL, -- Dữ liệu gốc (text)
+    @UserID INT = NULL -- Liên kết với tài khoản User (nếu có)
 AS
 BEGIN
     SET NOCOUNT ON;
 
     DECLARE @EncryptedMedicalHistory VARBINARY(MAX) = NULL;
+
+    -- Chỉ mã hóa nếu có lịch sử bệnh
     IF @MedicalHistory IS NOT NULL AND LEN(@MedicalHistory) > 0
     BEGIN
+        -- Không cần mở key bất đối xứng
         SET @EncryptedMedicalHistory = EncryptByAsymKey(AsymKey_ID('MedicalAsymKey'), CONVERT(VARBINARY(MAX), @MedicalHistory));
     END
+
     INSERT INTO InsuredPersons (
         FullName, Gender, DateOfBirth, Workplace,
         PermanentAddress, TemporaryAddress, ContactAddress,
@@ -274,11 +291,11 @@ CREATE PROCEDURE CreateInsuranceContract
     @ContractNumber NVARCHAR(50),
     @InsuranceTypeID INT,
     @InsuredPersonID INT,
-    @ContractCreatorUserID INT,
+    @ContractCreatorUserID INT, -- UserID người tạo từ ứng dụng
     @StartDate DATE,
     @EndDate DATE,
-    @InsuranceValue DECIMAL(18, 2),
-    @PremiumAmount DECIMAL(18, 2),
+    @InsuranceValue DECIMAL(18, 2), -- Dữ liệu gốc
+    @PremiumAmount DECIMAL(18, 2), -- Dữ liệu gốc
     @PaymentFrequency NVARCHAR(50),
     @Status NVARCHAR(50) = N'Mới'
 AS
@@ -288,6 +305,7 @@ BEGIN
     DECLARE @EncryptedValue VARBINARY(MAX);
     DECLARE @EncryptedPremium VARBINARY(MAX);
 
+    -- Kiểm tra quyền và dữ liệu đầu vào
     DECLARE @CreatorRole NVARCHAR(50);
     SELECT @CreatorRole = Role FROM Users WHERE UserID = @ContractCreatorUserID AND IsActive = 1;
 
@@ -335,15 +353,19 @@ BEGIN
             @PaymentFrequency, @Status, SYSDATETIME()
         );
 
+        -- Đóng khóa đối xứng
         CLOSE SYMMETRIC KEY AppSymKey;
     END TRY
     BEGIN CATCH
+        -- Đóng key trong catch block nếu có lỗi
         BEGIN TRY
             CLOSE SYMMETRIC KEY AppSymKey;
         END TRY
         BEGIN CATCH
+            -- Không làm gì nếu đóng thất bại
         END CATCH;
 
+        -- Ném lại lỗi
         THROW;
     END CATCH
 END;
@@ -369,6 +391,7 @@ BEGIN
         RETURN;
     END
 
+    -- 1. Kiểm tra quyền người dùng: phải là Accountant hoặc Supervisor
     SELECT @CurrentUserRole = Role FROM Users WHERE UserID = @CurrentUserID AND IsActive = 1;
 
     IF @CurrentUserRole NOT IN ('Accountant', 'Supervisor')
@@ -376,6 +399,8 @@ BEGIN
         RAISERROR(N'Bạn không có quyền truy cập thông tin này.', 16, 1);
         RETURN;
     END
+
+    -- 2. Kiểm tra xem người dùng có được phân công cho loại BH của hợp đồng này không
     SELECT @InsuranceTypeOfContract = InsuranceTypeID
     FROM InsuranceContracts
     WHERE ContractID = @TargetContractID;
@@ -535,7 +560,7 @@ GO
 
 
 
--- SP quản lý người dùng khác 
+-- SP quản lý người dùng khác (ví dụ)
 CREATE PROCEDURE UpdateUserRoleOrStatus
     @UserID INT,
     @NewRole NVARCHAR(50) = NULL,
@@ -572,18 +597,21 @@ END
 GO
 
 CREATE PROCEDURE AssignAccountantOrSupervisorToType
-    @AssigningUserID INT,
+    @AssigningUserID INT, -- Người thực hiện gán (cần kiểm tra quyền)
     @TargetUserID INT,
     @InsuranceTypeID INT,
-    @RoleToAssign NVARCHAR(50)
+    @RoleToAssign NVARCHAR(50) -- 'Accountant' or 'Supervisor'
 AS
 BEGIN
     SET NOCOUNT ON;
+    -- *** Thêm kiểm tra quyền của @AssigningUserID ***
+
     IF @RoleToAssign NOT IN ('Accountant', 'Supervisor')
     BEGIN
          RAISERROR('Chỉ có thể gán vai trò Accountant hoặc Supervisor.', 16, 1);
          RETURN;
     END
+
     DECLARE @TargetUserRole NVARCHAR(50);
     SELECT @TargetUserRole = Role FROM Users WHERE UserID = @TargetUserID AND IsActive = 1;
 
@@ -598,6 +626,8 @@ BEGIN
          RAISERROR('Loại bảo hiểm không tồn tại.', 16, 1);
          RETURN;
     END
+
+    -- Kiểm tra trùng lặp trước khi insert
     IF NOT EXISTS (SELECT 1 FROM RoleAssignments WHERE UserID = @TargetUserID AND InsuranceTypeID = @InsuranceTypeID AND AssignedRole = @RoleToAssign)
     BEGIN
         INSERT INTO RoleAssignments(UserID, InsuranceTypeID, AssignedRole)
@@ -607,13 +637,14 @@ END
 GO
 
 CREATE PROCEDURE RevokeAccountantOrSupervisorFromType
-    @RevokingUserID INT,
+    @RevokingUserID INT, -- Người thực hiện thu hồi (cần kiểm tra quyền)
     @TargetUserID INT,
     @InsuranceTypeID INT,
-    @RoleToRevoke NVARCHAR(50)
+    @RoleToRevoke NVARCHAR(50) -- 'Accountant' or 'Supervisor'
 AS
 BEGIN
      SET NOCOUNT ON;
+     -- *** Thêm kiểm tra quyền của @RevokingUserID ***
 
      IF @RoleToRevoke NOT IN ('Accountant', 'Supervisor')
      BEGIN
@@ -631,11 +662,12 @@ GO
 
 -- ****** TRIGGER GHI NHẬT KÝ (Sửa ChangedByUserID) ******
 
---Function để lấy chi tiết thay đổi 
+-- Helper Function để lấy chi tiết thay đổi (ví dụ đơn giản)
 CREATE FUNCTION dbo.fn_GetAuditDetails (@ActionType NVARCHAR(10), @Inserted XML, @Deleted XML)
 RETURNS NVARCHAR(MAX)
 AS
 BEGIN
+    -- Đây là ví dụ rất cơ bản, bạn có thể làm phức tạp hơn nhiều, ví dụ dùng JSON
     DECLARE @Details NVARCHAR(MAX) = '';
     IF @ActionType = 'INSERT' SET @Details = ISNULL(CONVERT(NVARCHAR(MAX), @Inserted, 1), '');
     IF @ActionType = 'DELETE' SET @Details = ISNULL(CONVERT(NVARCHAR(MAX), @Deleted, 1), '');
@@ -678,7 +710,7 @@ BEGIN
 END;
 GO
 
--- Trigger cho InsuranceTypes
+-- Trigger cho InsuranceTypes (Tương tự Users)
 CREATE TRIGGER trg_Audit_InsuranceTypes ON InsuranceTypes AFTER INSERT, UPDATE, DELETE AS
 BEGIN
     SET NOCOUNT ON;
@@ -696,7 +728,7 @@ BEGIN
 END;
 GO
 
--- Trigger cho InsuredPersons
+-- Trigger cho InsuredPersons (Tương tự)
 CREATE TRIGGER trg_Audit_InsuredPersons ON InsuredPersons AFTER INSERT, UPDATE, DELETE AS
 BEGIN
     SET NOCOUNT ON;
@@ -733,7 +765,7 @@ BEGIN
 END;
 GO
 
--- Trigger cho InsuranceContracts 
+-- Trigger cho InsuranceContracts (Tương tự, không log giá trị mã hóa)
 CREATE TRIGGER trg_Audit_InsuranceContracts ON InsuranceContracts AFTER INSERT, UPDATE, DELETE AS
 BEGIN
     SET NOCOUNT ON;
@@ -769,7 +801,7 @@ BEGIN
 END;
 GO
 
--- Trigger cho RoleAssignments 
+-- Trigger cho RoleAssignments (Tương tự)
 CREATE TRIGGER trg_Audit_RoleAssignments ON RoleAssignments AFTER INSERT, UPDATE, DELETE AS
 BEGIN
     SET NOCOUNT ON;
@@ -849,7 +881,7 @@ ADD BLOCK PREDICATE dbo.fn_rls_BlockInsuranceContractsChanges(CAST(SESSION_CONTE
     ON dbo.InsuranceContracts BEFORE DELETE
 WITH (STATE = ON);
 
-/*
+
 -- ****** Dữ liệu mẫu ******
 -- User
 INSERT INTO Users (Username, PasswordHash, FullName, Role, IsActive)
@@ -906,42 +938,6 @@ EXEC CreateInsuredPerson
 GO
 
 
---InsuranceContracts
-EXEC CreateInsuranceContract
-    @ContractNumber = 'BH001',
-    @InsuranceTypeID = 1, -- Bảo hiểm Y tế
-    @InsuredPersonID = 1,
-    @ContractCreatorUserID = 2, -- creator01
-    @StartDate = '2024-01-01',
-    @EndDate = '2025-01-01',
-    @InsuranceValue = 50000000,
-    @PremiumAmount = 1200000,
-    @PaymentFrequency = N'Hàng tháng';
-
-
-EXEC CreateInsuranceContract
-    @ContractNumber = 'BH002',
-    @InsuranceTypeID = 2,
-    @InsuredPersonID = 2,
-    @ContractCreatorUserID = 3, -- creator02
-    @StartDate = '2024-02-15',
-    @EndDate = '2025-02-15',
-    @InsuranceValue = 20000000,
-    @PremiumAmount = 500000,
-    @PaymentFrequency = N'Hàng quý';
-
-EXEC CreateInsuranceContract
-    @ContractNumber = 'BH003',
-    @InsuranceTypeID = 3,
-    @InsuredPersonID = 3,
-    @ContractCreatorUserID = 2, -- creator01
-    @StartDate = '2023-09-01',
-    @EndDate = '2024-09-01',
-    @InsuranceValue = 100000000,
-    @PremiumAmount = 3000000,
-    @PaymentFrequency = N'Hàng năm';
-GO
-
 
 --RoleAssignments
 EXEC AssignAccountantOrSupervisorToType
@@ -956,4 +952,3 @@ EXEC AssignAccountantOrSupervisorToType
     @InsuranceTypeID = 2,
     @RoleToAssign = 'Supervisor';
 GO
-*/

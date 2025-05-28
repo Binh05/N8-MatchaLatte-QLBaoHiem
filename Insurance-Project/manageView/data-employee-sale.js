@@ -1,7 +1,9 @@
 function loadEmployeeList() {
     const tableBody = document.querySelector("#employeeTable tbody");
+    urlParams = new URLSearchParams(window.location.search);
+    const role = urlParams.get("role");
 
-    fetch("http://127.0.0.1:5000/users/role/ContractCreator", {
+    fetch(`http://127.0.0.1:5000/users/role/${role}`, {
         method: "GET",
         headers: {
             "Content-Type": "application/json"
@@ -21,7 +23,7 @@ function loadEmployeeList() {
                 <td>${nv.role}</td>
                 <td><span class="status-online">${nv.is_active ? "Hoat dong" : "Khong hoat dong"}</span></td>
                 <td>
-                    <button class="btn btn-edit btn-sm btn-warning" onclick="editEmployee('${nv.user_id}')">Sửa</button>
+                    <button class="btn btn-edit btn-sm btn-warning" onclick="editEmployee('${nv.user_id}', '${nv.full_name}')">Sửa</button>
                     <button class="btn btn-delete btn-sm btn-danger" onclick="deleteEmployee('${nv.user_id}')">Xoá</button>
                 </td>
             `;
@@ -37,8 +39,8 @@ document.addEventListener("DOMContentLoaded", function () {
     loadEmployeeList();
 });
 
-function editEmployee(manv) {
-    window.location.href = `edit-employee.html?manv=${manv}&role=seller`;
+function editEmployee(manv, name) {
+    window.location.href = `edit-employee.html?manv=${manv}&role=ContractCreator&name=${name}`;
 }
 
 function deleteEmployee(manv) {
